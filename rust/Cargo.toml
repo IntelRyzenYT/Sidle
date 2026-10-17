@@ -1,0 +1,7 @@
+[package]
+name = "sidle_rust"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+idevice = { git = "https://github.com/jkcoxson/idevice", default-features = false, features = ["wasm", "ring", "remote_pairing"] }
