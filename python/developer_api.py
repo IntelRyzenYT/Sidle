@@ -369,7 +369,7 @@ class DeveloperAPI:
         params = {
             "teamId": self.team_id,
             "bundleId": str(bundle_id).strip(),
-            "name": profile_name or f"SideDroid {bundle_id}",
+            "name": profile_name or f"Sidle {bundle_id}",
             "profileType": profile_type,
         }
         certs = list(certificate_ids or [])
@@ -413,7 +413,7 @@ class DeveloperAPI:
 
        # Utilities
     @staticmethod
-    def generate_csr(common_name: str = "SideDroid") -> bytes:
+    def generate_csr(common_name: str = "Sidle") -> bytes:
         """Generate an RSA-2048 CSR in PEM format."""
         from cryptography import x509
         from cryptography.hazmat.primitives import hashes, serialization
