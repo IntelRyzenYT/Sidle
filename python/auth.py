@@ -25,8 +25,8 @@ import urllib3
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-
-ANISETTE_URL = "https://anisette-v3-server-sg29.onrender.com/"
+#This is where you can customize anisette if you have a patch; please apply it here.
+ANISETTE_URL = "https://anisette-v3-server-ue3p.onrender.com"
 ANISETTE_FALLBACK = []
 COOKIE_PATH = os.path.expanduser("~/.sideload/cookies.enc")
 
@@ -48,7 +48,7 @@ def _safe_plist_loads(data):
 
 
 def derive_key(password):
-    salt = b"SideDroid-Cookie-Salt-v1"
+    salt = b"sidle-Cookie-Salt-v1"
     return hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 100000, 32)
 
 
@@ -56,7 +56,7 @@ def save_cookies_encrypted(cookies_dict, password):
     try:
         key = derive_key(password)
         iv = os.urandom(12)
-        aad = b"SideDroid-Cookies-v1"
+        aad = b"Sidle-Cookies-v1"
         plaintext = json.dumps(cookies_dict).encode("utf-8")
 
         encryptor = Cipher(
@@ -98,7 +98,7 @@ def load_cookies_encrypted(password):
         iv = blob[:12]
         tag = blob[12:28]
         ciphertext = blob[28:]
-        aad = b"SideDroid-Cookies-v1"
+        aad = b"Sidle-Cookies-v1"
         key = derive_key(password)
 
         decryptor = Cipher(
@@ -244,7 +244,7 @@ class AppleAuth:
         return unpadder.update(decrypted) + unpadder.finalize()
 
     def decrypt_gcm(self, sk, encrypted_data):
-        # Layout: 3-byte XYZ (AAD) + 16-byte IV + ciphertext + 16-byte tag.
+        # Layout: 3-byte "XYZ" (AAD) + 16-byte IV + ciphertext + 16-byte tag.
         if len(encrypted_data) < 35:
             raise Exception("Encrypted token too short")
         if encrypted_data[:3] != b"XYZ":
@@ -694,12 +694,14 @@ class AppleAuth:
                 return token_info["token"]
             return None
         except Exception as e:
+            import traceback
             print(f"[apptoken] Error: {e}")
+            traceback.print_exc()
             return None
 
-    def authenticate(self, apple_id, password, _depth=0):
+    def authenticate(self, apple_id, password, fetch_team=True, _depth=0):
         # Flow: SRP init -> complete -> (2FA if required) -> retry for a fresh
-        # session key -> app token.
+        # session key -> app token -> (optional) team list + team_id.
         try:
             print(f"[auth] Starting: {apple_id}")
 
@@ -844,7 +846,7 @@ class AppleAuth:
                 else:
                     print("[2fa] OK, retrying login for a fresh session key...")
                     time.sleep(1)
-                    return self.authenticate(apple_id, password, _depth=_depth + 1)
+                    return self.authenticate(apple_id, password, fetch_team=fetch_team, _depth=_depth + 1)
 
             dsid = (
                 spd_data.get("adsid")
@@ -862,18 +864,45 @@ class AppleAuth:
                     adsid, c2, idms, sk
                 )
 
-            return {
+            final_token = (
+                app_session_token
+                or spd_data.get("GsIdmsToken")
+                or status.get("idmsToken")
+            )
+
+            result = {
                 "user_id": apple_id,
                 "authenticated": True,
                 "dsid": dsid,
-                "session_token": (
-                    app_session_token
-                    or spd_data.get("GsIdmsToken")
-                    or status.get("idmsToken")
-                ),
+                "session_token": final_token,
                 "m2": response.get("M2"),
                 "srp_user": usr,
+                "team_id": None,
+                "teams": [],
             }
+
+            # Enrich with team info when we have a real Xcode app token.
+            if fetch_team and final_token:
+                try:
+                    from developer_api import DeveloperAPI
+                    api = DeveloperAPI(self, dsid=dsid, session_token=final_token)
+                    teams = api.list_teams()
+                    result["teams"] = teams
+                    if teams:
+                        team_id = teams[0].get("teamId")
+                        for t in teams:
+                            if "personal" in str(t.get("name", "")).lower():
+                                team_id = t.get("teamId")
+                                break
+                        api.set_team(team_id)
+                        result["team_id"] = team_id
+                        print(f"[auth] Teams: {len(teams)}, using {team_id}")
+                    else:
+                        print("[auth] No teams returned by Developer Portal")
+                except Exception as e:
+                    print(f"[auth] Fetch teams failed: {e}")
+
+            return result
 
         except Exception as e:
             print(f"[auth] Error: {e}")
@@ -897,6 +926,9 @@ if __name__ == "__main__":
     if result and result.get("authenticated"):
         print("*** SUCCESS! ***")
         print(f"  DSID: {result.get('dsid')}")
+        print(f"  Team ID: {result.get('team_id')}")
+        for t in result.get("teams", []):
+            print(f"    - {t.get('teamId')}  {t.get('name')}")
     else:
         print("*** FAILED ***")
 
